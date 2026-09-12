@@ -1,5 +1,5 @@
 using System.Drawing;
-using System.Drawing.Imaging;
+using System.IO;
 
 namespace NetworkDownloadTray.Services;
 
@@ -20,39 +20,87 @@ public static class TrayIconRenderer
         ['.'] = ["00000", "00000", "00000", "00000", "00000", "00100", "00100"]
     };
 
-    public static Icon Create(double speed, bool measuring)
+    private static readonly string[][] CompactGlyphs =
+    [
+        ["111","101","101","101","101","101","111"],
+        ["010","110","010","010","010","010","111"],
+        ["110","001","001","010","100","100","111"],
+        ["110","001","001","110","001","001","110"],
+        ["101","101","101","111","001","001","001"],
+        ["111","100","100","110","001","001","110"],
+        ["011","100","100","111","101","101","111"],
+        ["111","001","001","010","010","100","100"],
+        ["111","101","101","111","101","101","111"],
+        ["111","101","101","111","001","001","110"]
+    ];
+
+    public static string DisplayText(double speed, bool measuring, bool available = true) =>
+        !available ? "-" : measuring ? "..." :
+        DownloadSpeedCalculator.FormatMegabits(Math.Min(9999, speed));
+
+    public static Icon Create(string text, int size = 16)
     {
-        const int size = 16;
-        string text = measuring ? "..." : DownloadSpeedCalculator.FormatMegabits(speed);
-        int scale = 1;
-        int glyphWidth = 5 * scale;
-        int spacing = text.Length >= 3 ? 0 : scale;
-        int totalWidth = text.Length * glyphWidth + (text.Length - 1) * spacing;
-        int startX = Math.Max(0, (size - totalWidth) / 2);
-        int startY = Math.Max(0, (size - 7 * scale) / 2 + 1);
+        using var stream = new MemoryStream(EncodeIco(text, size), writable: false);
+        using var icon = new Icon(stream, size, size);
+        return (Icon)icon.Clone();
+    }
 
-        using var bitmap = new Bitmap(size, size, PixelFormat.Format32bppArgb);
-        using (var graphics = Graphics.FromImage(bitmap)) graphics.Clear(Color.Transparent);
-
-        for (int index = 0; index < text.Length; index++)
+    public static bool[,] RenderPixels(string text, int size = 16)
+    {
+        if (size < 16 || size > 64) throw new ArgumentOutOfRangeException(nameof(size));
+        if (string.IsNullOrEmpty(text) || text.Length > 4 ||
+            text.Any(c => !Glyphs.ContainsKey(c) && c != '-'))
+            throw new ArgumentException("Use at most four digits, dots or a dash.", nameof(text));
+        bool compact = text.Length == 4;
+        int width = compact ? 3 : 5;
+        int spacing = text.Length == 3 ? 0 : 1;
+        int startX = (16 - (text.Length * width + (text.Length - 1) * spacing)) / 2;
+        const int startY = 5; // Preserve the accepted 16px glyph placement.
+        var logical = new bool[16, 16];
+        for (int i = 0; i < text.Length; i++)
         {
-            if (!Glyphs.TryGetValue(text[index], out string[]? glyph)) continue;
-            int x = startX + index * (glyphWidth + spacing);
-            for (int row = 0; row < glyph.Length; row++)
-            for (int column = 0; column < glyph[row].Length; column++)
-            if (glyph[row][column] == '1')
-            for (int dy = 0; dy < scale; dy++)
-            for (int dx = 0; dx < scale; dx++)
-            {
-                int px = x + column * scale + dx;
-                int py = startY + row * scale + dy;
-                if (px < size && py < size) bitmap.SetPixel(px, py, Color.FromArgb(255, 255, 210, 55));
-            }
+            string[] glyph = text[i] == '-'
+                ? ["00000","00000","00000","11111","00000","00000","00000"]
+                : compact && char.IsAsciiDigit(text[i]) ? CompactGlyphs[text[i] - '0'] : Glyphs[text[i]];
+            for (int y = 0; y < 7; y++)
+            for (int x = 0; x < width; x++)
+                logical[startY + y, startX + i * (width + spacing) + x] = glyph[y][x] == '1';
         }
+        var pixels = new bool[size, size];
+        for (int y = 0; y < size; y++)
+        for (int x = 0; x < size; x++)
+            pixels[y, x] = logical[y * 16 / size, x * 16 / size];
+        return pixels;
+    }
 
-        // Clone the icon before the bitmap is disposed. Returning Icon.FromHandle
-        // directly would leave the returned icon dependent on the bitmap handle.
-        using Icon temporaryIcon = Icon.FromHandle(bitmap.GetHicon());
-        return (Icon)temporaryIcon.Clone();
+    // ICO DIB: explicit BGRA alpha AND a 1-bit transparency mask. No GetHicon
+    // conversion, disk I/O, or shared URI cache involved.
+    public static byte[] EncodeIco(string text, int size = 16)
+    {
+        bool[,] pixels = RenderPixels(text, size);
+        int maskStride = ((size + 31) / 32) * 4;
+        int imageBytes = size * size * 4 + maskStride * size;
+        using var stream = new MemoryStream();
+        using var writer = new BinaryWriter(stream);
+        writer.Write((ushort)0); writer.Write((ushort)1); writer.Write((ushort)1);
+        writer.Write((byte)size); writer.Write((byte)size);
+        writer.Write((byte)0); writer.Write((byte)0);
+        writer.Write((ushort)1); writer.Write((ushort)32);
+        writer.Write(40 + imageBytes); writer.Write(22);
+        writer.Write(40); writer.Write(size); writer.Write(size * 2);
+        writer.Write((ushort)1); writer.Write((ushort)32);
+        writer.Write(0); writer.Write(imageBytes);
+        writer.Write(0); writer.Write(0); writer.Write(0); writer.Write(0);
+        for (int y = size - 1; y >= 0; y--)
+        for (int x = 0; x < size; x++)
+            writer.Write(pixels[y, x] ? 0xFFFFD237u : 0u);
+        for (int y = size - 1; y >= 0; y--)
+        {
+            var mask = new byte[maskStride];
+            for (int x = 0; x < size; x++)
+                if (!pixels[y, x]) mask[x / 8] |= (byte)(0x80 >> (x % 8));
+            writer.Write(mask);
+        }
+        return stream.ToArray();
     }
 }

@@ -1,121 +1,94 @@
 using System.Windows.Threading;
-using System.Windows;
-using System.Windows.Controls;
-using System.Drawing;
-using System.IO;
-using System.Windows.Media.Imaging;
-using H.NotifyIcon;
+using Microsoft.Win32;
 using NetworkDownloadTray.Models;
 
 namespace NetworkDownloadTray.Services;
 
+// Samples off the UI thread; publishes immutable results on the WPF dispatcher.
 public sealed class DownloadMonitorService : IDisposable
 {
-    private readonly NetworkSpeedReader _reader = new();
+    private readonly NetworkSpeedReader _reader;
     private readonly DispatcherTimer _timer;
-    private readonly TaskbarIcon _taskbarIcon;
-    private bool _disposed;
-    private Action? _openWindow;
-    private string? _lastIconKey;
-    private BitmapImage? _lastIconSource;
+    private readonly Dispatcher _dispatcher;
+    private bool _disposed, _busy, _started;
+    private int _generation;
 
     public event EventHandler<DownloadSpeedSnapshot>? SpeedUpdated;
     public event EventHandler<IReadOnlyList<NetworkAdapterDiagnostic>>? DiagnosticsUpdated;
+    public event EventHandler<NetworkReadResult>? SampleUpdated;
+    public NetworkReadResult? Latest { get; private set; }
 
-    public bool IsTrayIconCreated => _taskbarIcon.IsCreated;
-
-    public DownloadMonitorService()
+    public DownloadMonitorService(NetworkSpeedReader? reader = null)
     {
-        _taskbarIcon = new TaskbarIcon
-        {
-            ToolTipText = "Download: measuring...",
-            Visibility = Visibility.Visible,
-            IconSource = null,
-            ContextMenu = CreateContextMenu()
-        };
+        _reader = reader ?? new();
+        _dispatcher = Dispatcher.CurrentDispatcher;
         _timer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(1) };
         _timer.Tick += OnTick;
     }
 
+    public void ConfigureAdapters(IReadOnlyDictionary<string, bool> overrides)
+    {
+        _generation++;
+        _reader.ConfigureAdapters(overrides);
+    }
+
     public void Start()
     {
-        Update();
-        // The TaskbarIcon is created in code-behind, so it never receives
-        // the Loaded event that normally calls ForceCreate internally.
-        _taskbarIcon.ForceCreate(enablesEfficiencyMode: false);
+        ObjectDisposedException.ThrowIf(_disposed, this);
+        if (_started) return;
+        _started = true;
+        SystemEvents.PowerModeChanged += OnPowerModeChanged;
         _timer.Start();
+        _ = RefreshAsync();
     }
 
-    public void SetOpenWindowAction(Action openWindow) => _openWindow = openWindow;
-
-    private ContextMenu CreateContextMenu()
+    private void OnPowerModeChanged(object sender, PowerModeChangedEventArgs e)
     {
-        var menu = new ContextMenu();
-
-        var openItem = new MenuItem { Header = "Open" };
-        openItem.Click += (_, _) => _openWindow?.Invoke();
-
-        var exitItem = new MenuItem { Header = "Exit" };
-        exitItem.Click += (_, _) =>
-        {
-            if (Application.Current is App app) app.ShutdownApplication();
-            else Application.Current.Shutdown();
-        };
-
-        menu.Items.Add(openItem);
-        menu.Items.Add(new Separator());
-        menu.Items.Add(exitItem);
-        return menu;
+        if (!_disposed && !_dispatcher.HasShutdownStarted)
+            _dispatcher.BeginInvoke(new Action(() =>
+            {
+                if (_disposed) return;
+                ResetMeasurements();
+                if (e.Mode == PowerModes.Resume) _ = RefreshAsync();
+            }));
     }
 
-    private void OnTick(object? sender, EventArgs e) => Update();
+    private async void OnTick(object? sender, EventArgs e) => await RefreshAsync();
 
-    private void Update()
+    internal void ResetMeasurements()
     {
-        NetworkReadResult result = _reader.ReadWithDiagnostics();
-        DownloadSpeedSnapshot snapshot = result.Snapshot;
-        DiagnosticsUpdated?.Invoke(this, result.Diagnostics);
-        SpeedUpdated?.Invoke(this, snapshot);
-        string iconKey = snapshot.IsMeasuring
-            ? "..."
-            : DownloadSpeedCalculator.FormatMegabits(snapshot.MegabitsPerSecond);
-        if (!string.Equals(iconKey, _lastIconKey, StringComparison.Ordinal))
+        _generation++;
+        _reader.Reset();
+    }
+
+    public async Task RefreshAsync()
+    {
+        if (_disposed || _busy) return;
+        _busy = true;
+        int generation = _generation;
+        try
         {
-            using Icon icon = TrayIconRenderer.Create(snapshot.MegabitsPerSecond, snapshot.IsMeasuring);
-            _lastIconSource = ConvertToBitmapImage(icon);
-            _taskbarIcon.IconSource = _lastIconSource;
-            _lastIconKey = iconKey;
+            NetworkReadResult result = await Task.Run(_reader.ReadWithDiagnostics);
+            if (_disposed || generation != _generation) return;
+            Latest = result;
+            SampleUpdated?.Invoke(this, result);
+            SpeedUpdated?.Invoke(this, result.Snapshot);
+            DiagnosticsUpdated?.Invoke(this, result.Diagnostics);
         }
-        _taskbarIcon.Visibility = Visibility.Visible;
-
-        _taskbarIcon.ToolTipText = snapshot.IsAvailable
-            ? snapshot.IsMeasuring
-                ? $"Download: measuring...\nAdapter: {snapshot.AdapterDescription}"
-                : $"Download: {snapshot.MegabitsPerSecond:0} Mbps\nAdapter: {snapshot.AdapterDescription}"
-            : "Download: unavailable\nNo active network adapter";
-    }
-
-    private static BitmapImage ConvertToBitmapImage(Icon icon)
-    {
-        string dir = Path.Combine(Path.GetTempPath(), "NetworkDownloadTray");
-        Directory.CreateDirectory(dir);
-        string path = Path.Combine(dir, "tray-icon.ico");
-        using (var stream = File.Create(path)) icon.Save(stream);
-        var image = new BitmapImage();
-        image.BeginInit();
-        image.CacheOption = BitmapCacheOption.OnLoad;
-        image.UriSource = new Uri(path, UriKind.Absolute);
-        image.EndInit();
-        image.Freeze();
-        return image;
+        catch (Exception ex)
+        {
+            AppLog.Error("Monitor update", ex);
+        }
+        finally { _busy = false; }
     }
 
     public void Dispose()
     {
         if (_disposed) return;
         _disposed = true;
+        _generation++;
         _timer.Stop();
         _timer.Tick -= OnTick;
-        _taskbarIcon.Dispose();
+        if (_started) SystemEvents.PowerModeChanged -= OnPowerModeChanged;
     }
 }

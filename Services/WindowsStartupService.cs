@@ -1,27 +1,29 @@
-using Microsoft.Win32;
+using System.IO;
 
 namespace NetworkDownloadTray.Services;
 
 public sealed class WindowsStartupService
 {
-    private const string RunKey = @"Software\Microsoft\Windows\CurrentVersion\Run";
-    private const string AppName = "NetworkDownloadTray";
-
-    public bool IsEnabled()
+    private readonly IStartupStore _store;
+    private readonly Func<string?> _processPath;
+    private readonly Func<string, bool> _fileExists;
+    public WindowsStartupService(IStartupStore? store = null, Func<string?>? processPath = null,
+        Func<string, bool>? fileExists = null)
     {
-        using var key = Registry.CurrentUser.OpenSubKey(RunKey, false);
-        return key?.GetValue(AppName) is string value && !string.IsNullOrWhiteSpace(value);
+        _store = store ?? new RegistryStartupStore();
+        _processPath = processPath ?? (() => Environment.ProcessPath);
+        _fileExists = fileExists ?? File.Exists;
     }
-
+    public string? RegisteredCommand => _store.Read();
+    public bool IsEnabled() => !string.IsNullOrWhiteSpace(RegisteredCommand);
     public void SetEnabled(bool enabled)
     {
-        using var key = Registry.CurrentUser.CreateSubKey(RunKey);
-        if (key is null) return;
-        if (enabled)
-        {
-            string executable = Environment.ProcessPath ?? throw new InvalidOperationException("Process path is unavailable.");
-            key.SetValue(AppName, $"\"{executable}\"");
-        }
-        else key.DeleteValue(AppName, false);
+        if (!enabled) { _store.Write(null); return; }
+        string path = _processPath() ?? throw new InvalidOperationException("Process path is unavailable.");
+        if (!Path.IsPathFullyQualified(path) || !_fileExists(path) ||
+            !path.EndsWith(".exe", StringComparison.OrdinalIgnoreCase) ||
+            string.Equals(Path.GetFileName(path), "dotnet.exe", StringComparison.OrdinalIgnoreCase))
+            throw new InvalidOperationException("Start the published NetworkDownloadTray.exe before enabling startup.");
+        _store.Write($"\"{path}\"");
     }
 }

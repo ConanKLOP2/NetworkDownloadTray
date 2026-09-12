@@ -20,15 +20,31 @@
 - [x] P0.3 — Bỏ I/O ICO lặp lại mỗi giây hoặc cache icon an toàn.
 - [x] P1.1 — Gộp việc đọc adapter và diagnostics trong một lần lấy mẫu.
 - [x] P1.2 — Giảm refresh DataGrid và tránh nhấp nháy UI.
-- [ ] P1.3 — Cải thiện adapter filter và lưu override theo interface Id.
-- [ ] P1.4 — Làm settings save atomic và chịu lỗi tốt hơn.
-- [ ] P1.5 — Xử lý sleep/resume, taskbar restart và adapter reset.
-- [ ] P1.6 — Tách service để dễ test và giảm phụ thuộc WPF.
-- [ ] P1.7 — Bổ sung unit tests cho reader, renderer, settings và startup abstraction.
-- [ ] P2.1 — Tối ưu pixel renderer/cache icon.
-- [ ] P2.2 — Hoàn thiện UI diagnostics/settings.
-- [ ] P2.3 — Tạo publish profile và kiểm tra publish sạch.
-- [ ] P2.4 — Rà soát tài liệu sử dụng và quy trình release.
+- [x] P1.3 — Cải thiện adapter filter và lưu override theo interface Id.
+- [x] P1.4 — Làm settings save atomic và chịu lỗi tốt hơn.
+- [x] P1.5 — Code reset khi power event, retry tray và adapter reset; kiểm tra desktop thật còn ở release gate bên dưới.
+- [x] P1.6 — Tách network provider/reader/monitor/tray/startup store.
+- [x] P1.7 — Tests reader, bounds/alpha/resource, settings, startup và WPF smoke; native tray là test opt-in.
+- [x] P2.1 — Pixel renderer 16px + DPI, ICO trong memory, cache giá trị cuối, không ghi ICO tạm.
+- [x] P2.2 — Bảng có dòng ổn định, filter, copy ID, menu override, settings riêng.
+- [ ] P2.3 — Đã tạo hai publish profile; portable publish thành công. Self-contained đang bị chặn tải runtime bởi TLS.
+- [x] P2.4 — README và release checklist đã cập nhật.
+
+## Release gates còn mở
+
+### Audit code lần cuối — 2026-09-12
+
+- Build Release: pass, 0 warning / 0 error.
+- Automated tests: 33 passed, 0 failed, 1 skipped có chủ đích (`NativeTrayTests`, cần desktop tương tác).
+- Static review: không còn `Bitmap.GetHicon`, ghi ICO tạm, enumerate adapter trùng trong một sample, hoặc cập nhật DataGrid toàn bộ theo từng tick.
+- Không phát hiện optimization code bắt buộc còn thiếu. Các mục còn mở bên dưới là release/environment gates, không phải lỗi tối ưu trong code.
+
+Checkbox code hoàn thành không có nghĩa đã kiểm tra mọi tình huống Windows thật.
+
+1. Chạy native tray test với NDT_DESKTOP_TESTS=1 trong phiên desktop tương tác. Lần chạy tại sandbox bị TryCreate failed; không đánh dấu pass.
+2. Sleep/resume thật, đăng xuất/đăng nhập kiểm tra startup, Task Manager disabled entry, Explorer restart thật, DPI nhiều màn hình: chưa thực hiện vì ảnh hưởng phiên làm việc.
+3. Publish self-contained win-x64: NuGet báo NU1301 / SEC_E_NO_CREDENTIALS khi TLS; thử công cụ HTTPS khác không tải thành công. Profile đã sẵn sàng để chạy bằng Visual Studio/terminal thông thường.
+4. Bản outputs/portable đã build, yêu cầu .NET Desktop Runtime 10 x64 và phải copy cả thư mục.
 
 ## Chi tiết từng bước
 
@@ -38,7 +54,7 @@ Kiểm tra và sửa việc tạo `Icon` từ `Bitmap.GetHicon()`, bảo đảm 
 
 Tiêu chí hoàn thành:
 
-- Không dùng handle của bitmap đã bị dispose.
+- Icon sở hữu handle độc lập, giải phóng đúng owner. Renderer cuối không còn Bitmap.GetHicon.
 - Icon cập nhật ổn định qua nhiều chu kỳ.
 - Không tăng GDI handles bất thường khi chạy lâu.
 
@@ -55,7 +71,7 @@ Tiêu chí hoàn thành:
 
 ### P0.3 — Icon update/cache
 
-Không ghi file ICO mỗi giây. Ưu tiên `GeneratedIconSource` hoặc cache theo text; nếu cần pixel renderer thì dùng pipeline có alpha đúng và chỉ render khi giá trị hiển thị thay đổi.
+Giữ custom glyph pixel theo yêu cầu người dùng. ICO BGRA + AND mask được encode trong memory, truyền trực tiếp vào TaskbarIcon.Icon; thư viện sở hữu Icon. Cache theo text và kích thước DPI, chỉ render khi thay đổi.
 
 ### P1.1 — Một lần đọc adapter
 
