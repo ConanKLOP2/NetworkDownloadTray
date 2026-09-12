@@ -1,7 +1,9 @@
 using System.Windows.Threading;
 using System.Windows;
-using System.IO;
 using System.Windows.Controls;
+using System.Drawing;
+using System.IO;
+using System.Windows.Media.Imaging;
 using H.NotifyIcon;
 using NetworkDownloadTray.Models;
 
@@ -26,7 +28,7 @@ public sealed class DownloadMonitorService : IDisposable
         {
             ToolTipText = "Download: measuring...",
             Visibility = Visibility.Visible,
-            IconSource = TrayIconRenderer.Create(0, true),
+            IconSource = ConvertToBitmapImage(TrayIconRenderer.Create(0, true)),
             ContextMenu = CreateContextMenu()
         };
         _timer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(1) };
@@ -67,7 +69,8 @@ public sealed class DownloadMonitorService : IDisposable
         DownloadSpeedSnapshot snapshot = _reader.Read();
         DiagnosticsUpdated?.Invoke(this, _reader.GetDiagnostics());
         SpeedUpdated?.Invoke(this, snapshot);
-        _taskbarIcon.IconSource = TrayIconRenderer.Create(snapshot.MegabitsPerSecond, snapshot.IsMeasuring);
+        using Icon icon = TrayIconRenderer.Create(snapshot.MegabitsPerSecond, snapshot.IsMeasuring);
+        _taskbarIcon.IconSource = ConvertToBitmapImage(icon);
         _taskbarIcon.Visibility = Visibility.Visible;
 
         _taskbarIcon.ToolTipText = snapshot.IsAvailable
@@ -75,6 +78,21 @@ public sealed class DownloadMonitorService : IDisposable
                 ? $"Download: measuring...\nAdapter: {snapshot.AdapterDescription}"
                 : $"Download: {snapshot.MegabitsPerSecond:0} Mbps\nAdapter: {snapshot.AdapterDescription}"
             : "Download: unavailable\nNo active network adapter";
+    }
+
+    private static BitmapImage ConvertToBitmapImage(Icon icon)
+    {
+        string dir = Path.Combine(Path.GetTempPath(), "NetworkDownloadTray");
+        Directory.CreateDirectory(dir);
+        string path = Path.Combine(dir, "tray-icon.ico");
+        using (var stream = File.Create(path)) icon.Save(stream);
+        var image = new BitmapImage();
+        image.BeginInit();
+        image.CacheOption = BitmapCacheOption.OnLoad;
+        image.UriSource = new Uri(path, UriKind.Absolute);
+        image.EndInit();
+        image.Freeze();
+        return image;
     }
 
     public void Dispose()
