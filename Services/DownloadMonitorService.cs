@@ -16,6 +16,8 @@ public sealed class DownloadMonitorService : IDisposable
     private readonly TaskbarIcon _taskbarIcon;
     private bool _disposed;
     private Action? _openWindow;
+    private string? _lastIconKey;
+    private BitmapImage? _lastIconSource;
 
     public event EventHandler<DownloadSpeedSnapshot>? SpeedUpdated;
     public event EventHandler<IReadOnlyList<NetworkAdapterDiagnostic>>? DiagnosticsUpdated;
@@ -28,7 +30,7 @@ public sealed class DownloadMonitorService : IDisposable
         {
             ToolTipText = "Download: measuring...",
             Visibility = Visibility.Visible,
-            IconSource = ConvertToBitmapImage(TrayIconRenderer.Create(0, true)),
+            IconSource = null,
             ContextMenu = CreateContextMenu()
         };
         _timer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(1) };
@@ -54,7 +56,11 @@ public sealed class DownloadMonitorService : IDisposable
         openItem.Click += (_, _) => _openWindow?.Invoke();
 
         var exitItem = new MenuItem { Header = "Exit" };
-        exitItem.Click += (_, _) => Application.Current.Shutdown();
+        exitItem.Click += (_, _) =>
+        {
+            if (Application.Current is App app) app.ShutdownApplication();
+            else Application.Current.Shutdown();
+        };
 
         menu.Items.Add(openItem);
         menu.Items.Add(new Separator());
@@ -66,11 +72,20 @@ public sealed class DownloadMonitorService : IDisposable
 
     private void Update()
     {
-        DownloadSpeedSnapshot snapshot = _reader.Read();
-        DiagnosticsUpdated?.Invoke(this, _reader.GetDiagnostics());
+        NetworkReadResult result = _reader.ReadWithDiagnostics();
+        DownloadSpeedSnapshot snapshot = result.Snapshot;
+        DiagnosticsUpdated?.Invoke(this, result.Diagnostics);
         SpeedUpdated?.Invoke(this, snapshot);
-        using Icon icon = TrayIconRenderer.Create(snapshot.MegabitsPerSecond, snapshot.IsMeasuring);
-        _taskbarIcon.IconSource = ConvertToBitmapImage(icon);
+        string iconKey = snapshot.IsMeasuring
+            ? "..."
+            : DownloadSpeedCalculator.FormatMegabits(snapshot.MegabitsPerSecond);
+        if (!string.Equals(iconKey, _lastIconKey, StringComparison.Ordinal))
+        {
+            using Icon icon = TrayIconRenderer.Create(snapshot.MegabitsPerSecond, snapshot.IsMeasuring);
+            _lastIconSource = ConvertToBitmapImage(icon);
+            _taskbarIcon.IconSource = _lastIconSource;
+            _lastIconKey = iconKey;
+        }
         _taskbarIcon.Visibility = Visibility.Visible;
 
         _taskbarIcon.ToolTipText = snapshot.IsAvailable

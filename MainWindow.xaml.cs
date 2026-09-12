@@ -9,6 +9,7 @@ public partial class MainWindow : Window
     private readonly DownloadMonitorService _monitor;
     private readonly AppSettings _settings;
     private readonly SettingsService _settingsService;
+    private DateTime _lastDiagnosticsRefreshUtc = DateTime.MinValue;
 
     public MainWindow(DownloadMonitorService monitor, AppSettings settings, SettingsService settingsService)
     {
@@ -25,6 +26,8 @@ public partial class MainWindow : Window
 
     private void Monitor_DiagnosticsUpdated(object? sender, IReadOnlyList<NetworkAdapterDiagnostic> diagnostics)
     {
+        if (DateTime.UtcNow - _lastDiagnosticsRefreshUtc < TimeSpan.FromSeconds(5)) return;
+        _lastDiagnosticsRefreshUtc = DateTime.UtcNow;
         AdapterGrid.ItemsSource = diagnostics;
     }
 
@@ -86,19 +89,21 @@ public partial class MainWindow : Window
 
     private void Exit_Click(object sender, RoutedEventArgs e)
     {
-        Application.Current.Shutdown();
+        if (Application.Current is App app) app.ShutdownApplication();
+        else Application.Current.Shutdown();
     }
 
     protected override void OnClosing(System.ComponentModel.CancelEventArgs e)
     {
-        _monitor.SpeedUpdated -= Monitor_SpeedUpdated;
-        if (!Application.Current.ShutdownMode.Equals(ShutdownMode.OnExplicitShutdown))
+        if (Application.Current is App app && app.IsExiting)
         {
+            _monitor.SpeedUpdated -= Monitor_SpeedUpdated;
+            _monitor.DiagnosticsUpdated -= Monitor_DiagnosticsUpdated;
             base.OnClosing(e);
             return;
         }
 
-        // Closing the test window should not stop the tray monitor.
+        // The window close button hides the UI; tray monitoring continues.
         e.Cancel = true;
         Hide();
     }

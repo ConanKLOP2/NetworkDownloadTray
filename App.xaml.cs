@@ -9,6 +9,15 @@ public partial class App : Application
     private DownloadMonitorService? _monitor;
     private readonly SettingsService _settingsService = new();
 
+    public bool IsExiting { get; private set; }
+
+    public void ShutdownApplication()
+    {
+        if (IsExiting) return;
+        IsExiting = true;
+        Shutdown();
+    }
+
     protected override void OnStartup(StartupEventArgs e)
     {
         base.OnStartup(e);

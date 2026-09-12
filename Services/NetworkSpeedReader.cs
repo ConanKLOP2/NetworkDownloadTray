@@ -63,6 +63,53 @@ public sealed class NetworkSpeedReader
         return new(megabitsPerSecond, description, false, true);
     }
 
+    public NetworkReadResult ReadWithDiagnostics()
+    {
+        var allAdapters = NetworkInterface.GetAllNetworkInterfaces();
+        var diagnostics = new List<NetworkAdapterDiagnostic>(allAdapters.Length);
+        var includedAdapters = new List<(NetworkInterface Adapter, long BytesReceived)>();
+
+        foreach (var adapter in allAdapters)
+        {
+            long? bytes = null;
+            try { bytes = adapter.GetIPv4Statistics().BytesReceived; } catch (NetworkInformationException) { }
+
+            bool included = IsUsableAdapter(adapter);
+            string reason = GetExclusionReason(adapter);
+            diagnostics.Add(new NetworkAdapterDiagnostic(adapter.Name, adapter.Description, adapter.NetworkInterfaceType, adapter.OperationalStatus, included, bytes, reason));
+            if (included && bytes.HasValue) includedAdapters.Add((adapter, bytes.Value));
+        }
+
+        long currentBytes = includedAdapters.Sum(item => item.BytesReceived);
+        string description = includedAdapters.Count == 1 ? includedAdapters[0].Adapter.Description : $"{includedAdapters.Count} active adapters";
+        long now = Stopwatch.GetTimestamp();
+
+        if (includedAdapters.Count == 0)
+        {
+            Reset();
+            return new(new(0, "No active adapter", false, false), diagnostics);
+        }
+
+        if (!_hasSample)
+        {
+            _previousBytes = currentBytes;
+            _previousTimestamp = now;
+            _hasSample = true;
+            return new(new(0, description, true, true), diagnostics);
+        }
+
+        double elapsedSeconds = (now - _previousTimestamp) / (double)Stopwatch.Frequency;
+        long deltaBytes = currentBytes - _previousBytes;
+        _previousBytes = currentBytes;
+        _previousTimestamp = now;
+
+        if (elapsedSeconds <= 0 || deltaBytes < 0)
+            return new(new(0, description, true, true), diagnostics);
+
+        double speed = DownloadSpeedCalculator.BytesPerSecondToMegabits(deltaBytes, elapsedSeconds);
+        return new(new(speed, description, false, true), diagnostics);
+    }
+
     public IReadOnlyList<NetworkAdapterDiagnostic> GetDiagnostics()
     {
         return NetworkInterface.GetAllNetworkInterfaces().Select(adapter =>

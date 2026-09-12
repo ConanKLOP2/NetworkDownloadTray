@@ -50,6 +50,9 @@ public static class TrayIconRenderer
             }
         }
 
-        return Icon.FromHandle(bitmap.GetHicon());
+        // Clone the icon before the bitmap is disposed. Returning Icon.FromHandle
+        // directly would leave the returned icon dependent on the bitmap handle.
+        using Icon temporaryIcon = Icon.FromHandle(bitmap.GetHicon());
+        return (Icon)temporaryIcon.Clone();
     }
 }
