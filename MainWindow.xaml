@@ -1,0 +1,19 @@
+<Window x:Class="NetworkDownloadTray.MainWindow" xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation" xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml" Title="Network Download Tray" Width="620" Height="430" MinWidth="560" MinHeight="380" WindowStartupLocation="CenterScreen" Background="#0B1220" ResizeMode="CanResize" UseLayoutRounding="True">
+    <Window.Resources>
+        <Style TargetType="TextBlock"><Setter Property="FontFamily" Value="Segoe UI"/><Setter Property="Foreground" Value="#F8FAFC"/></Style>
+        <Style x:Key="SecondaryText" TargetType="TextBlock" BasedOn="{StaticResource {x:Type TextBlock}}"><Setter Property="Foreground" Value="#94A3B8"/></Style>
+        <Style x:Key="PrimaryButton" TargetType="Button"><Setter Property="Foreground" Value="#06111F"/><Setter Property="Background" Value="#38BDF8"/><Setter Property="BorderThickness" Value="0"/><Setter Property="FontFamily" Value="Segoe UI"/><Setter Property="FontSize" Value="13"/><Setter Property="FontWeight" Value="SemiBold"/><Setter Property="Padding" Value="18,9"/><Setter Property="Cursor" Value="Hand"/></Style>
+        <Style x:Key="SecondaryButton" TargetType="Button" BasedOn="{StaticResource PrimaryButton}"><Setter Property="Foreground" Value="#CBD5E1"/><Setter Property="Background" Value="#1E293B"/></Style>
+    </Window.Resources>
+    <Border Margin="16" CornerRadius="18" Background="#111C2E" BorderBrush="#263750" BorderThickness="1">
+        <Grid Margin="28">
+            <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="20"/><RowDefinition Height="*"/><RowDefinition Height="24"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
+            <Grid Grid.Row="0">
+                <StackPanel Orientation="Horizontal"><Border Width="38" Height="38" CornerRadius="12" Background="#0EA5E9"><TextBlock Text="↓" FontSize="25" FontWeight="Bold" HorizontalAlignment="Center" VerticalAlignment="Center"/></Border><StackPanel Margin="13,0,0,0" VerticalAlignment="Center"><TextBlock Text="Network Download" FontSize="19" FontWeight="SemiBold"/><TextBlock Text="Real-time network monitor" Style="{StaticResource SecondaryText}" FontSize="12" Margin="0,2,0,0"/></StackPanel></StackPanel>
+                <Border HorizontalAlignment="Right" VerticalAlignment="Center" Background="#123B36" CornerRadius="10" Padding="10,5"><StackPanel Orientation="Horizontal"><Ellipse Width="7" Height="7" Fill="#34D399" VerticalAlignment="Center"/><TextBlock Text=" LIVE" Foreground="#6EE7B7" FontSize="11" FontWeight="SemiBold"/></StackPanel></Border>
+            </Grid>
+            <Border Grid.Row="2" CornerRadius="16" Background="#0B1424" BorderBrush="#1E3A5F" BorderThickness="1" Padding="24"><StackPanel VerticalAlignment="Center"><TextBlock Text="DOWNLOAD SPEED" Foreground="#7DD3FC" FontSize="11" FontWeight="SemiBold" HorizontalAlignment="Center"/><TextBlock x:Name="SpeedText" Text="-- Mbps" FontSize="48" FontWeight="Bold" HorizontalAlignment="Center" Margin="0,8,0,2"/><TextBlock x:Name="AdapterText" Text="Đang đo..." Style="{StaticResource SecondaryText}" FontSize="13" HorizontalAlignment="Center"/></StackPanel></Border>
+            <Grid Grid.Row="4"><StackPanel Orientation="Horizontal" VerticalAlignment="Center"><Ellipse Width="8" Height="8" Fill="#34D399" Margin="0,0,8,0"/><TextBlock x:Name="TrayStatusText" Text="Checking tray icon..." Style="{StaticResource SecondaryText}" FontSize="12"/></StackPanel><StackPanel Orientation="Horizontal" HorizontalAlignment="Right"><Button Content="Minimize to Tray" Style="{StaticResource SecondaryButton}" Click="MinimizeToTray_Click" Margin="0,0,8,0"/><Button Content="Exit" Style="{StaticResource PrimaryButton}" Click="Exit_Click"/></StackPanel></Grid>
+        </Grid>
+    </Border>
+</Window>
