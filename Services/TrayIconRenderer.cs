@@ -1,4 +1,5 @@
 using System.Windows.Media;
+using System.Windows;
 using H.NotifyIcon;
 
 namespace NetworkDownloadTray.Services;
@@ -10,9 +11,9 @@ public static class TrayIconRenderer
         string text = measuring ? "..." : DownloadSpeedCalculator.FormatMegabits(megabitsPerSecond);
         double fontSize = text.Length switch
         {
-            <= 2 => 32,
-            3 => 25,
-            _ => 19
+            <= 2 => 72,
+            3 => 58,
+            _ => 44
         };
 
         return new GeneratedIconSource
