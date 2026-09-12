@@ -1,8 +1,7 @@
 using System.Windows.Threading;
 using System.Windows;
-using System.Drawing;
 using System.IO;
-using System.Windows.Media.Imaging;
+using System.Windows.Controls;
 using H.NotifyIcon;
 using NetworkDownloadTray.Models;
 
@@ -14,8 +13,10 @@ public sealed class DownloadMonitorService : IDisposable
     private readonly DispatcherTimer _timer;
     private readonly TaskbarIcon _taskbarIcon;
     private bool _disposed;
+    private Action? _openWindow;
 
     public event EventHandler<DownloadSpeedSnapshot>? SpeedUpdated;
+    public event EventHandler<IReadOnlyList<NetworkAdapterDiagnostic>>? DiagnosticsUpdated;
 
     public bool IsTrayIconCreated => _taskbarIcon.IsCreated;
 
@@ -25,7 +26,8 @@ public sealed class DownloadMonitorService : IDisposable
         {
             ToolTipText = "Download: measuring...",
             Visibility = Visibility.Visible,
-            IconSource = CreateBitmapImage(0, true)
+            IconSource = TrayIconRenderer.Create(0, true),
+            ContextMenu = CreateContextMenu()
         };
         _timer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(1) };
         _timer.Tick += OnTick;
@@ -40,14 +42,32 @@ public sealed class DownloadMonitorService : IDisposable
         _timer.Start();
     }
 
+    public void SetOpenWindowAction(Action openWindow) => _openWindow = openWindow;
+
+    private ContextMenu CreateContextMenu()
+    {
+        var menu = new ContextMenu();
+
+        var openItem = new MenuItem { Header = "Open" };
+        openItem.Click += (_, _) => _openWindow?.Invoke();
+
+        var exitItem = new MenuItem { Header = "Exit" };
+        exitItem.Click += (_, _) => Application.Current.Shutdown();
+
+        menu.Items.Add(openItem);
+        menu.Items.Add(new Separator());
+        menu.Items.Add(exitItem);
+        return menu;
+    }
+
     private void OnTick(object? sender, EventArgs e) => Update();
 
     private void Update()
     {
         DownloadSpeedSnapshot snapshot = _reader.Read();
+        DiagnosticsUpdated?.Invoke(this, _reader.GetDiagnostics());
         SpeedUpdated?.Invoke(this, snapshot);
-        using Icon icon = TrayIconRenderer.Create(snapshot.MegabitsPerSecond, snapshot.IsMeasuring);
-        _taskbarIcon.IconSource = ConvertToBitmapImage(icon);
+        _taskbarIcon.IconSource = TrayIconRenderer.Create(snapshot.MegabitsPerSecond, snapshot.IsMeasuring);
         _taskbarIcon.Visibility = Visibility.Visible;
 
         _taskbarIcon.ToolTipText = snapshot.IsAvailable
@@ -55,31 +75,6 @@ public sealed class DownloadMonitorService : IDisposable
                 ? $"Download: measuring...\nAdapter: {snapshot.AdapterDescription}"
                 : $"Download: {snapshot.MegabitsPerSecond:0} Mbps\nAdapter: {snapshot.AdapterDescription}"
             : "Download: unavailable\nNo active network adapter";
-    }
-
-    private static BitmapImage ConvertToBitmapImage(Icon icon)
-    {
-        string directory = Path.Combine(Path.GetTempPath(), "NetworkDownloadTray");
-        Directory.CreateDirectory(directory);
-        string filePath = Path.Combine(directory, "tray-icon.ico");
-        using (var fileStream = File.Create(filePath))
-        {
-            icon.Save(fileStream);
-        }
-
-        var image = new BitmapImage();
-        image.BeginInit();
-        image.CacheOption = BitmapCacheOption.OnLoad;
-        image.UriSource = new Uri(filePath, UriKind.Absolute);
-        image.EndInit();
-        image.Freeze();
-        return image;
-    }
-
-    private static BitmapImage CreateBitmapImage(double speed, bool measuring)
-    {
-        using Icon icon = TrayIconRenderer.Create(speed, measuring);
-        return ConvertToBitmapImage(icon);
     }
 
     public void Dispose()

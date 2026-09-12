@@ -1,4 +1,5 @@
 using System.Text.Json;
+using System.IO;
 using NetworkDownloadTray.Models;
 
 namespace NetworkDownloadTray.Services;

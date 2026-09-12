@@ -63,10 +63,60 @@ public sealed class NetworkSpeedReader
         return new(megabitsPerSecond, description, false, true);
     }
 
+    public IReadOnlyList<NetworkAdapterDiagnostic> GetDiagnostics()
+    {
+        return NetworkInterface.GetAllNetworkInterfaces().Select(adapter =>
+        {
+            bool included = IsUsableAdapter(adapter);
+            long? bytes = null;
+            try { bytes = adapter.GetIPv4Statistics().BytesReceived; } catch (NetworkInformationException) { }
+            string reason = GetExclusionReason(adapter);
+            return new NetworkAdapterDiagnostic(adapter.Name, adapter.Description, adapter.NetworkInterfaceType, adapter.OperationalStatus, included, bytes, reason);
+        }).ToArray();
+    }
+
     public void Reset() => _hasSample = false;
 
     private static bool IsUsableAdapter(NetworkInterface adapter) =>
         adapter.OperationalStatus == OperationalStatus.Up &&
-        adapter.NetworkInterfaceType != NetworkInterfaceType.Loopback &&
-        adapter.NetworkInterfaceType != NetworkInterfaceType.Tunnel;
+        IsPhysicalNetworkType(adapter.NetworkInterfaceType) &&
+        !IsVirtualAdapter(adapter);
+
+    private static string GetExclusionReason(NetworkInterface adapter)
+    {
+        if (adapter.OperationalStatus != OperationalStatus.Up) return "Status is not Up";
+        if (!IsPhysicalNetworkType(adapter.NetworkInterfaceType)) return "Non-physical interface type";
+        if (IsVirtualAdapter(adapter)) return "Virtual/filter interface";
+        return string.Empty;
+    }
+
+    private static bool IsVirtualAdapter(NetworkInterface adapter)
+    {
+        string identity = $"{adapter.Name} {adapter.Description}".ToUpperInvariant();
+        string[] markers =
+        [
+            "VIRTUAL",
+            "WAN MINIport".ToUpperInvariant(),
+            "WFP",
+            "FILTER",
+            "QOS PACKET SCHEDULER",
+            "NETWORK MONITOR",
+            "WI-FI DIRECT",
+            "LOOPBACK",
+            "BLUETOOTH",
+            "KERNEL DEBUG",
+            "VMWARE",
+            "VIRTUALBOX",
+            "HYPER-V",
+            "TAP-WINDOWS",
+            "WIREGUARD"
+        ];
+        return markers.Any(identity.Contains);
+    }
+
+    private static bool IsPhysicalNetworkType(NetworkInterfaceType type) =>
+        type == NetworkInterfaceType.Ethernet ||
+        type == NetworkInterfaceType.FastEthernetT ||
+        type == NetworkInterfaceType.GigabitEthernet ||
+        type == NetworkInterfaceType.Wireless80211;
 }
