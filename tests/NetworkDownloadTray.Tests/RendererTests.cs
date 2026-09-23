@@ -42,10 +42,11 @@ public class RendererTests
     }
 
     // Captured from the MemoryStream/BinaryWriter encoder at 7dc41c6; output must stay byte-identical.
+    // "0" and "403" were re-captured when the 5-wide zero lost its diagonal slash.
     [Theory]
-    [InlineData("0", 16, "0A7AD68D3B77296398500EF4A9D01CA4D2127A35EDA77804782884F7B4BF8C5F")]
+    [InlineData("0", 16, "8B5479FA26940DC4EB607A4E66EADE788EB01DD6783EBEFFB8B0D219B7C7D9DE")]
     [InlineData("46", 16, "589E4BFE4A892F13615B8AAB64D1A590C2D20754307EC8E7A7BE136D2208A9C6")]
-    [InlineData("403", 16, "2E4514B33488B8336209906A33348AE17085A1F140D1223CBF2D9FF07B538049")]
+    [InlineData("403", 16, "A93759519C2108EB0C110E1E9BDCE1069699A6B7E74F7A3EFACB23974ADDB8D2")]
     [InlineData("9999", 16, "244D2561967468191D96A85B6D9351ED3B451154C8ECB399229890A3B8CE0016")]
     [InlineData("...", 16, "976FFC2FBF4E74591C12C2F60129E445BF154FA2F45E21E8AB3F1BE57968C1BC")]
     [InlineData("-", 16, "50288D5765296F994537906E448CFCA07B1B49316236D3281D77D2496FE288CB")]
@@ -56,6 +57,31 @@ public class RendererTests
     [InlineData("46", 64, "2395CCF91F07936EC6204E98C140A6A18D5257CF8632EBB5252C92E8BB6D8D68")]
     public void EncodedIcoMatchesGoldenHash(string text, int size, string sha256) =>
         Assert.Equal(sha256, Convert.ToHexString(SHA256.HashData(TrayIconRenderer.EncodeIco(text, size))));
+
+    // Zero is a plain box: full outline, empty inside (no slash or dot).
+    // Cells are in 16px logical coordinates: glyph rows start at y=5, "0" is centered at x=5, "1000" starts at x=0.
+    [Theory]
+    [InlineData("0", 16, 5, 5)] [InlineData("0", 32, 5, 5)] [InlineData("10", 16, 8, 5)]
+    [InlineData("1000", 16, 4, 3)] [InlineData("1000", 16, 8, 3)] [InlineData("1000", 16, 12, 3)] [InlineData("1000", 32, 12, 3)]
+    public void ZeroHasOutlineAndEmptyInterior(string text, int size, int left, int width)
+    {
+        bool[,] pixels = TrayIconRenderer.RenderPixels(text, size);
+        int scale = size / 16;
+        bool Lit(int x, int y) => pixels[y * scale, x * scale];
+        for (int y = 5; y < 12; y++)
+        {
+            Assert.True(Lit(left, y), $"left edge y={y}");
+            Assert.True(Lit(left + width - 1, y), $"right edge y={y}");
+        }
+        for (int x = left; x < left + width; x++)
+        {
+            Assert.True(Lit(x, 5), $"top edge x={x}");
+            Assert.True(Lit(x, 11), $"bottom edge x={x}");
+        }
+        for (int y = 6 * scale; y < 11 * scale; y++)
+        for (int x = (left + 1) * scale; x < (left + width - 1) * scale; x++)
+            Assert.False(pixels[y, x], $"interior pixel ({x},{y}) is lit");
+    }
 
     [Fact]
     public void FourthDigitIsRenderedAndInvalidInputsAreRejected()
