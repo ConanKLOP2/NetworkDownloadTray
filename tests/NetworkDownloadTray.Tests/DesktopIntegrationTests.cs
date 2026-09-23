@@ -101,6 +101,13 @@ public class DesktopIntegrationTests
                             using var file = File.Create(Path.Combine(output, "window-smoke.png"));
                             encoder.Save(file);
                         }
+                        // Lazy startup path: a window first built after sampling began shows the latest sample on first open.
+                        var late = new MainWindow(monitor, new AppSettings(), new SettingsService(path), tray,
+                            new WindowsStartupService(new Store()));
+                        late.ShowFromTray();
+                        Assert.Equal("80 Mbps", ((TextBlock)late.FindName("SpeedText")).Text);
+                        Assert.Equal(3, ((DataGrid)late.FindName("AdapterGrid")).Items.Count);
+                        late.Close();
                         app.Shutdown();
                     }
                     catch (Exception ex) { failure = ex; app.Shutdown(); }

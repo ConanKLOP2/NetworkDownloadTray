@@ -5,12 +5,13 @@ using NetworkDownloadTray.Models;
 namespace NetworkDownloadTray.Services;
 
 // Samples off the UI thread; publishes immutable results on the WPF dispatcher.
+// Sampling pauses while the session is locked/disconnected.
 public sealed class DownloadMonitorService : IDisposable
 {
     private readonly NetworkSpeedReader _reader;
     private readonly DispatcherTimer _timer;
     private readonly Dispatcher _dispatcher;
-    private bool _disposed, _busy, _started;
+    private bool _disposed, _busy, _started, _locked;
     private int _generation;
 
     public event EventHandler<DownloadSpeedSnapshot>? SpeedUpdated;
@@ -26,6 +27,9 @@ public sealed class DownloadMonitorService : IDisposable
         _timer.Tick += OnTick;
     }
 
+    // True while the 1 s timer runs (never before Start, after Dispose, or while locked).
+    internal bool IsSampling => _timer.IsEnabled;
+
     public void ConfigureAdapters(IReadOnlyDictionary<string, bool> overrides)
     {
         _generation++;
@@ -38,19 +42,56 @@ public sealed class DownloadMonitorService : IDisposable
         if (_started) return;
         _started = true;
         SystemEvents.PowerModeChanged += OnPowerModeChanged;
+        SystemEvents.SessionSwitch += OnSessionSwitch;
+        if (_locked) return;
         _timer.Start();
         _ = RefreshAsync();
     }
 
-    private void OnPowerModeChanged(object sender, PowerModeChangedEventArgs e)
+    private void OnPowerModeChanged(object sender, PowerModeChangedEventArgs e) => Post(e.Mode switch
+    {
+        PowerModes.Suspend => OnSuspended,
+        PowerModes.Resume => OnResumed,
+        _ => ResetMeasurements
+    });
+
+    private void OnSessionSwitch(object sender, SessionSwitchEventArgs e)
+    {
+        switch (e.Reason)
+        {
+            case SessionSwitchReason.SessionLock or SessionSwitchReason.ConsoleDisconnect or SessionSwitchReason.RemoteDisconnect:
+                Post(OnSessionLocked); break;
+            case SessionSwitchReason.SessionUnlock or SessionSwitchReason.ConsoleConnect or SessionSwitchReason.RemoteConnect:
+                Post(OnSessionUnlocked); break;
+        }
+    }
+
+    // SystemEvents fire on their own thread; every state change happens on the dispatcher.
+    private void Post(Action action)
     {
         if (!_disposed && !_dispatcher.HasShutdownStarted)
-            _dispatcher.BeginInvoke(new Action(() =>
-            {
-                if (_disposed) return;
-                ResetMeasurements();
-                if (e.Mode == PowerModes.Resume) _ = RefreshAsync();
-            }));
+            _dispatcher.BeginInvoke(new Action(() => { if (!_disposed) action(); }));
+    }
+
+    internal void OnSessionLocked() { _locked = true; Pause(); }
+    internal void OnSessionUnlocked() { _locked = false; Resume(); }
+    // Suspend only resets: the timer cannot tick while asleep, and SystemEvents never reports
+    // PBT_APMRESUMEAUTOMATIC, so stopping here could leave sampling stopped after wake.
+    internal void OnSuspended() => ResetMeasurements();
+    internal void OnResumed() => Resume();
+
+    private void Pause()
+    {
+        _timer.Stop();
+        ResetMeasurements();
+    }
+
+    private void Resume()
+    {
+        ResetMeasurements();
+        if (_disposed || !_started || _locked) return;
+        _timer.Start();
+        _ = RefreshAsync();
     }
 
     private async void OnTick(object? sender, EventArgs e) => await RefreshAsync();
@@ -89,6 +130,8 @@ public sealed class DownloadMonitorService : IDisposable
         _generation++;
         _timer.Stop();
         _timer.Tick -= OnTick;
-        if (_started) SystemEvents.PowerModeChanged -= OnPowerModeChanged;
+        if (!_started) return;
+        SystemEvents.PowerModeChanged -= OnPowerModeChanged;
+        SystemEvents.SessionSwitch -= OnSessionSwitch;
     }
 }

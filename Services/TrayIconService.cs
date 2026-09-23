@@ -8,6 +8,7 @@ public sealed class TrayIconService : ITrayIconService
 {
     private readonly TaskbarIcon _icon;
     private string? _lastText;
+    private string? _lastTooltip;
     private int _lastSize;
     private bool _disposed;
     private DateTime _nextRetry;
@@ -45,7 +46,13 @@ public sealed class TrayIconService : ITrayIconService
                 : snapshot.IsMeasuring ? "Download: measuring..."
                 : $"Download: {DownloadSpeedCalculator.FormatMegabits(snapshot.MegabitsPerSecond)} Mbps";
             string fullTooltip = tooltip + "\n" + snapshot.AdapterDescription;
-            _icon.ToolTipText = fullTooltip[..Math.Min(120, fullTooltip.Length)];
+            fullTooltip = fullTooltip[..Math.Min(120, fullTooltip.Length)];
+            // Each assignment is a Shell_NotifyIcon round trip; skip it when nothing changed.
+            if (_lastTooltip != fullTooltip)
+            {
+                _icon.ToolTipText = fullTooltip;
+                _lastTooltip = fullTooltip;
+            }
             // Library handles TaskbarCreated. Retry if Explorer wasn't ready then.
             if (!_icon.IsCreated && DateTime.UtcNow >= _nextRetry)
             {
@@ -57,6 +64,7 @@ public sealed class TrayIconService : ITrayIconService
         catch (Exception ex)
         {
             _lastText = null;
+            _lastTooltip = null;
             Error = ex.Message;
             AppLog.Error("Update tray icon", ex);
         }

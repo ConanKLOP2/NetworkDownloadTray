@@ -149,3 +149,20 @@ File này ghi lại tuần tự mọi thay đổi theo `PLAN.md`.
 - Kết quả: 33 tests passed, 0 failed, 1 skipped có chủ đích; build Release 0 warning / 0 error.
 - Static review: không còn `Bitmap.GetHicon`, ICO file tạm, enumerate adapter trùng trong một sample, hoặc refresh DataGrid toàn bộ theo từng tick. Renderer alpha/mask và cache theo text + DPI vẫn đúng thiết kế.
 - Kết luận: code đã đạt các mục tối ưu bắt buộc trong plan. Còn lại chỉ là release gates cần xác nhận trên Windows desktop thật: native tray, Explorer restart, sleep/resume, startup login, DPI đa màn hình và self-contained publish khi môi trường NuGet/TLS hoạt động.
+
+## 2026-09-23 — R2 — Tối ưu hiệu năng vòng 2 (multi-agent)
+
+- Mục tiêu: giảm chi phí mỗi tick 1 giây (CPU, allocation, wake-up) và bộ nhớ thường trú, không đổi hành vi người dùng. Chi tiết kế hoạch, số đo và phân công agent trong `OPTIMIZATION_PLAN.md`.
+- Files thay đổi: `Services/NetworkStatisticsProvider.cs`, `Services/Native/IpHelperApi.cs` (mới), `Services/NetworkSpeedReader.cs`, `Services/AdapterCounterTracker.cs`, `Services/DownloadMonitorService.cs`, `Services/TrayIconRenderer.cs`, `Services/TrayIconService.cs`, `Services/SettingsService.cs`, `App.xaml.cs`, `Models/AdapterRow.cs`, `NetworkDownloadTray.csproj`, `Properties/PublishProfiles/win-x64.pubxml`, tests (`ProviderTests`, `MonitorTests`, `AdapterRowTests` mới; mở rộng `AdapterTests`, `ReaderTests`, `RendererTests`, `DesktopIntegrationTests`).
+- Thay đổi chính:
+  - Provider lai: danh sách adapter từ `GetAllNetworkInterfaces()` được cache (làm mới khi NetworkChange, sau 30 s, hoặc khi mất GUID); trạng thái và InOctets lấy bằng một lần `GetIfTable2` mỗi tick, ghép theo Guid; fallback về đường managed khi native lỗi. Id adapter giữ nguyên `NetworkInterface.Id`.
+  - Tracker double-buffer, 0 byte/tick. Reader đọc provider ngoài phạm vi UI thread chờ; `ConfigureAdapters`/`Reset` không khóa, mẫu đang đọc dở bị bỏ để tránh spike.
+  - Tạm dừng lấy mẫu khi khóa phiên, tiếp tục khi mở khóa. Suspend chỉ reset (xem bên dưới).
+  - Icon: bỏ `Clone()`, encode ICO vào một `byte[]` (golden hash bảo đảm giống từng byte); tooltip chỉ gửi khi đổi.
+  - Cửa sổ chính tạo lười khi khởi động thu nhỏ; `AdapterRow` chỉ notify thuộc tính thay đổi; `JsonSerializerOptions` static.
+  - Build: `ConcurrentGarbageCollection=false`, `SatelliteResourceLanguages=en`, `TieredPGO`; win-x64 bật ReadyToRun.
+- Kiểm tra đã chạy: `dotnet build -c Release` (0 warning / 0 error); `dotnet test -c Release` (59 passed, 0 failed, 1 skipped có chủ đích); harness so sánh baseline 7dc41c6 và bản mới trên cùng máy.
+- Kết quả: CPU mỗi tick 15.6–17.6 ms → ~0.9–1.0 ms; allocation 111 KB → 11 KB; tạo icon 32 px 0.95–1.34 ms → 0.45–0.61 ms; khởi động thu nhỏ bớt ~26 MB private bytes.
+- Review độc lập: sửa lỗi MED — dừng timer khi Suspend có thể khiến app ngừng cập nhật mãi mãi vì `SystemEvents` không báo `PBT_APMRESUMEAUTOMATIC`; nay Suspend chỉ reset. Sửa LOW — cache adapter chỉ đánh dấu mới sau khi enumerate thành công.
+- Vấn đề còn lại: trạng thái adapter không có dòng `GetIfTable2` (không gặp trên máy này) có thể trễ tới 30 s; win-x64 lớn hơn 16 MB do ReadyToRun; lần Open đầu sau khởi động thu nhỏ mất ~1–2 s.
+- Bước tiếp theo: kiểm tra trên desktop thật — native tray test (`NDT_DESKTOP_TESTS=1`), restart Explorer, khóa/mở khóa, sleep/wake.

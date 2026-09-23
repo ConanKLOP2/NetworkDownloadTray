@@ -9,6 +9,9 @@ public partial class App : Application
     private DownloadMonitorService? _monitor;
     private readonly SettingsService _settingsService = new();
     private TrayIconService? _tray;
+    private MainWindow? _window;
+    private AppSettings? _settings;
+    private WindowsStartupService? _startup;
     private Mutex? _instance;
     private bool _ownsInstance;
 
@@ -39,14 +42,21 @@ public partial class App : Application
 
         _monitor = new DownloadMonitorService();
         _monitor.ConfigureAdapters(settings.AdapterOverrides);
-        MainWindow? window = null;
-        _tray = new TrayIconService(() => window?.ShowFromTray(), ShutdownApplication);
-        window = new MainWindow(_monitor, settings, _settingsService, _tray, startup);
-        MainWindow = window;
+        _settings = settings; _startup = startup;
+        _tray = new TrayIconService(() => { if (!IsExiting) GetOrCreateWindow().ShowFromTray(); }, ShutdownApplication);
         _tray.Update(new(0, "Starting", true, true));
         _monitor.SampleUpdated += (_, result) => _tray.Update(result.Snapshot);
-        if (!settings.StartMinimizedToTray || !_tray.IsCreated) window.Show();
+        // Built on first show only; MainWindow pulls _monitor.Latest on Loaded, so a late window is current.
+        if (!settings.StartMinimizedToTray || !_tray.IsCreated) GetOrCreateWindow().Show();
         _monitor.Start();
+    }
+
+    private MainWindow GetOrCreateWindow()
+    {
+        if (_window != null) return _window;
+        _window = new MainWindow(_monitor!, _settings!, _settingsService, _tray!, _startup!);
+        MainWindow = _window;
+        return _window;
     }
 
     protected override void OnSessionEnding(SessionEndingCancelEventArgs e)

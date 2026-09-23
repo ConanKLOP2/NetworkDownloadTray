@@ -2,6 +2,7 @@ using System;
 using System.Diagnostics;
 using System.IO;
 using System.Runtime.InteropServices;
+using System.Security.Cryptography;
 using NetworkDownloadTray.Services;
 
 namespace NetworkDownloadTray.Tests;
@@ -39,6 +40,22 @@ public class RendererTests
         Assert.Equal(size, bitmap.Width);
         Assert.Equal(0, bitmap.GetPixel(0,0).A);
     }
+
+    // Captured from the MemoryStream/BinaryWriter encoder at 7dc41c6; output must stay byte-identical.
+    [Theory]
+    [InlineData("0", 16, "0A7AD68D3B77296398500EF4A9D01CA4D2127A35EDA77804782884F7B4BF8C5F")]
+    [InlineData("46", 16, "589E4BFE4A892F13615B8AAB64D1A590C2D20754307EC8E7A7BE136D2208A9C6")]
+    [InlineData("403", 16, "2E4514B33488B8336209906A33348AE17085A1F140D1223CBF2D9FF07B538049")]
+    [InlineData("9999", 16, "244D2561967468191D96A85B6D9351ED3B451154C8ECB399229890A3B8CE0016")]
+    [InlineData("...", 16, "976FFC2FBF4E74591C12C2F60129E445BF154FA2F45E21E8AB3F1BE57968C1BC")]
+    [InlineData("-", 16, "50288D5765296F994537906E448CFCA07B1B49316236D3281D77D2496FE288CB")]
+    [InlineData("88", 20, "937C97F7E6F54FA2F8B6A0BA0E630E94E6C0B951FC47F133B06BD78570ED70E3")]
+    [InlineData("999", 24, "5B02D23E180D3F996FBBD566BC0A9DE7F2B9C832B2D0F519CA41FC74DCE7B479")]
+    [InlineData("8888", 32, "24302F57B23B92D55B4CB25C621F8C84E498EB6173F5F3A2FAE29C1F92356B8F")]
+    [InlineData("46", 48, "CD821327B0B24574B25ECD4F67EA285B9F42BCAA2779E628C0C1ED5CCCC6E910")]
+    [InlineData("46", 64, "2395CCF91F07936EC6204E98C140A6A18D5257CF8632EBB5252C92E8BB6D8D68")]
+    public void EncodedIcoMatchesGoldenHash(string text, int size, string sha256) =>
+        Assert.Equal(sha256, Convert.ToHexString(SHA256.HashData(TrayIconRenderer.EncodeIco(text, size))));
 
     [Fact]
     public void FourthDigitIsRenderedAndInvalidInputsAreRejected()

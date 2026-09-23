@@ -1,3 +1,4 @@
+using System.Buffers.Binary;
 using System.Drawing;
 using System.IO;
 
@@ -38,11 +39,13 @@ public static class TrayIconRenderer
         !available ? "-" : measuring ? "..." :
         DownloadSpeedCalculator.FormatMegabits(Math.Min(9999, speed));
 
+    private static readonly string[] DashGlyph = ["00000","00000","00000","11111","00000","00000","00000"];
+
+    // Icon(Stream) copies the bytes into its own buffer, so the stream can be disposed.
     public static Icon Create(string text, int size = 16)
     {
         using var stream = new MemoryStream(EncodeIco(text, size), writable: false);
-        using var icon = new Icon(stream, size, size);
-        return (Icon)icon.Clone();
+        return new Icon(stream, size, size);
     }
 
     public static bool[,] RenderPixels(string text, int size = 16)
@@ -59,13 +62,13 @@ public static class TrayIconRenderer
         var logical = new bool[16, 16];
         for (int i = 0; i < text.Length; i++)
         {
-            string[] glyph = text[i] == '-'
-                ? ["00000","00000","00000","11111","00000","00000","00000"]
+            string[] glyph = text[i] == '-' ? DashGlyph
                 : compact && char.IsAsciiDigit(text[i]) ? CompactGlyphs[text[i] - '0'] : Glyphs[text[i]];
             for (int y = 0; y < 7; y++)
             for (int x = 0; x < width; x++)
                 logical[startY + y, startX + i * (width + spacing) + x] = glyph[y][x] == '1';
         }
+        if (size == 16) return logical;
         var pixels = new bool[size, size];
         for (int y = 0; y < size; y++)
         for (int x = 0; x < size; x++)
@@ -80,27 +83,30 @@ public static class TrayIconRenderer
         bool[,] pixels = RenderPixels(text, size);
         int maskStride = ((size + 31) / 32) * 4;
         int imageBytes = size * size * 4 + maskStride * size;
-        using var stream = new MemoryStream();
-        using var writer = new BinaryWriter(stream);
-        writer.Write((ushort)0); writer.Write((ushort)1); writer.Write((ushort)1);
-        writer.Write((byte)size); writer.Write((byte)size);
-        writer.Write((byte)0); writer.Write((byte)0);
-        writer.Write((ushort)1); writer.Write((ushort)32);
-        writer.Write(40 + imageBytes); writer.Write(22);
-        writer.Write(40); writer.Write(size); writer.Write(size * 2);
-        writer.Write((ushort)1); writer.Write((ushort)32);
-        writer.Write(0); writer.Write(imageBytes);
-        writer.Write(0); writer.Write(0); writer.Write(0); writer.Write(0);
+        var ico = new byte[22 + 40 + imageBytes];
+        Span<byte> s = ico;
+        // ICONDIR + ICONDIRENTRY (reserved, width/height, colors, reserved stay zero).
+        BinaryPrimitives.WriteUInt16LittleEndian(s[2..], 1);
+        BinaryPrimitives.WriteUInt16LittleEndian(s[4..], 1);
+        s[6] = (byte)size; s[7] = (byte)size;
+        BinaryPrimitives.WriteUInt16LittleEndian(s[10..], 1);
+        BinaryPrimitives.WriteUInt16LittleEndian(s[12..], 32);
+        BinaryPrimitives.WriteInt32LittleEndian(s[14..], 40 + imageBytes);
+        BinaryPrimitives.WriteInt32LittleEndian(s[18..], 22);
+        // BITMAPINFOHEADER (compression, resolution, palette fields stay zero).
+        BinaryPrimitives.WriteInt32LittleEndian(s[22..], 40);
+        BinaryPrimitives.WriteInt32LittleEndian(s[26..], size);
+        BinaryPrimitives.WriteInt32LittleEndian(s[30..], size * 2);
+        BinaryPrimitives.WriteUInt16LittleEndian(s[34..], 1);
+        BinaryPrimitives.WriteUInt16LittleEndian(s[36..], 32);
+        BinaryPrimitives.WriteInt32LittleEndian(s[42..], imageBytes);
+        int p = 62;
         for (int y = size - 1; y >= 0; y--)
+        for (int x = 0; x < size; x++, p += 4)
+            if (pixels[y, x]) BinaryPrimitives.WriteUInt32LittleEndian(s[p..], 0xFFFFD237u);
+        for (int y = size - 1; y >= 0; y--, p += maskStride)
         for (int x = 0; x < size; x++)
-            writer.Write(pixels[y, x] ? 0xFFFFD237u : 0u);
-        for (int y = size - 1; y >= 0; y--)
-        {
-            var mask = new byte[maskStride];
-            for (int x = 0; x < size; x++)
-                if (!pixels[y, x]) mask[x / 8] |= (byte)(0x80 >> (x % 8));
-            writer.Write(mask);
-        }
-        return stream.ToArray();
+            if (!pixels[y, x]) ico[p + x / 8] |= (byte)(0x80 >> (x % 8));
+        return ico;
     }
 }

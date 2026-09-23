@@ -6,6 +6,7 @@ namespace NetworkDownloadTray.Services;
 
 public sealed class SettingsService
 {
+    private static readonly JsonSerializerOptions Options = new() { WriteIndented = true };
     private readonly string _filePath;
     public SettingsService(string? filePath = null) => _filePath = Path.GetFullPath(filePath ?? Path.Combine(
         Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "NetworkDownloadTray", "settings.json"));
@@ -30,7 +31,7 @@ public sealed class SettingsService
         string temporary = _filePath + "." + Guid.NewGuid().ToString("N") + ".tmp";
         try
         {
-            byte[] data = JsonSerializer.SerializeToUtf8Bytes(settings, new JsonSerializerOptions { WriteIndented = true });
+            byte[] data = JsonSerializer.SerializeToUtf8Bytes(settings, Options);
             using (var stream = new FileStream(temporary, FileMode.CreateNew, FileAccess.Write, FileShare.None))
             {
                 stream.Write(data);

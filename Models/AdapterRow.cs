@@ -17,8 +17,16 @@ public sealed class AdapterRow : ObservableObject
     public string SelectionMode => _data.SelectionMode;
     public void Apply(NetworkAdapterDiagnostic data)
     {
-        if (_data == data) return;
+        var old = _data;
+        if (old == data) return;
         _data = data;
-        OnPropertyChanged(string.Empty);
+        if (old.Included != data.Included) OnPropertyChanged(nameof(Included));
+        if (old.Status != data.Status) OnPropertyChanged(nameof(Status));
+        if (old.BytesReceived != data.BytesReceived) OnPropertyChanged(nameof(BytesReceived));
+        if (old.ExclusionReason != data.ExclusionReason) OnPropertyChanged(nameof(ExclusionReason));
+        if (old.SelectionMode != data.SelectionMode) OnPropertyChanged(nameof(SelectionMode));
+        if (old.Name != data.Name) OnPropertyChanged(nameof(Name));
+        if (old.Description != data.Description) OnPropertyChanged(nameof(Description));
+        if (old.Type != data.Type) OnPropertyChanged(nameof(Type));
     }
 }
